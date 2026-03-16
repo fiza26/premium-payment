@@ -1,70 +1,81 @@
 import crypto from "crypto";
 import querystring from "querystring";
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
+);
 
 export default async function handler(req, res) {
-  // CORS Headers
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Signature");
 
   if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method !== "POST")
+    return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    const { plan, email } = req.body;
-    let nominal = plan === "3_month" ? 20000 : 100000;
+    const { plan, userId, email } = req.body;
+    let amount = plan === "3_month" ? 20000 : 100000;
 
     const merchantCode = process.env.WIJAYAPAY_MERCHANT_CODE;
     const apiKey = process.env.WIJAYAPAY_API_KEY;
     const refId = `INV${Date.now()}`;
 
-    // 1. Hitung Signature: md5(codemerchant + api_key + ref_id)
-    const rawString = merchantCode + apiKey + refId;
-    const xSignature = crypto.createHash("md5").update(rawString).digest("hex");
+    // 1. Buat Signature: md5(code_merchant + api_key + ref_id)
+    const xSignature = crypto
+      .createHash("md5")
+      .update(merchantCode + apiKey + refId)
+      .digest("hex");
 
-    // 2. Format body sebagai URL Encoded (sesuai contoh PHP: nominal tanpa tanda kutip di string)
-    const formData = {
+    // 2. Simpan transaksi ke tabel 'transactions' dengan status pending
+    const { error: dbError } = await supabase.from("transactions").insert({
+      user_id: userId,
+      plan: plan,
+      amount: amount,
+      status: "pending",
+      duitku_reference: refId,
+    });
+
+    if (dbError) throw new Error("Gagal mencatat transaksi ke database");
+
+    // 3. Siapkan Payload (Form URL Encoded)
+    const postData = querystring.stringify({
       code_merchant: merchantCode,
       api_key: apiKey,
       ref_id: refId,
       code_payment: "QRIS",
-      nominal: nominal,
-    };
+      nominal: amount,
+      customer_email: email || "",
+    });
 
-    // Mengubah object jadi string: code_merchant=WP...&api_key=...
-    const postData = querystring.stringify(formData);
-
-    console.log("String Hash:", rawString);
-    console.log("X-Signature:", xSignature);
-
-    // 3. Kirim Request
+    // 4. Request ke WijayaPay
     const response = await fetch(
       "https://wijayapay.com/api/transaction/create",
       {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": "insomnia/12.1.0",
-          "X-Signature": xSignature, // TARUH DI HEADER, BUKAN DI BODY
+          "X-Signature": xSignature,
         },
         body: postData,
       },
     );
 
     const data = await response.json();
-    console.log("Respon WijayaPay:", data);
 
     if (data.success) {
       return res.status(200).json({
-        paymentUrl:
-          data.data?.checkout_url ||
-          data.data?.qr_image ||
-          data.data?.payment_url,
+        paymentUrl: data.data?.qr_image || data.data?.checkout_url,
         refId: refId,
       });
     } else {
       return res.status(400).json({ error: data.message });
     }
   } catch (error) {
+    console.error(error);
     return res.status(500).json({ error: error.message });
   }
 }
