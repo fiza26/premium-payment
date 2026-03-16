@@ -8,6 +8,7 @@ const supabase = createClient(
 );
 
 export default async function handler(req, res) {
+  // --- BAGIAN CORS: WAJIB ADA AGAR TIDAK ERROR DI LOCALHOST ---
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Signature");
@@ -30,7 +31,7 @@ export default async function handler(req, res) {
       .update(merchantCode + apiKey + refId)
       .digest("hex");
 
-    // 2. Simpan transaksi ke tabel 'transactions' dengan status pending
+    // 2. Simpan transaksi ke tabel 'transactions' (Status: Pending)
     const { error: dbError } = await supabase.from("transactions").insert({
       user_id: userId,
       plan: plan,
@@ -39,9 +40,9 @@ export default async function handler(req, res) {
       duitku_reference: refId,
     });
 
-    if (dbError) throw new Error("Gagal mencatat transaksi ke database");
+    if (dbError) throw new Error("Gagal menyimpan transaksi ke database");
 
-    // 3. Siapkan Payload (Form URL Encoded)
+    // 3. Format Body untuk WijayaPay (Form URL Encoded)
     const postData = querystring.stringify({
       code_merchant: merchantCode,
       api_key: apiKey,
@@ -51,7 +52,7 @@ export default async function handler(req, res) {
       customer_email: email || "",
     });
 
-    // 4. Request ke WijayaPay
+    // 4. Request ke WijayaPay dengan X-Signature di Header
     const response = await fetch(
       "https://wijayapay.com/api/transaction/create",
       {
@@ -59,6 +60,7 @@ export default async function handler(req, res) {
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
           "X-Signature": xSignature,
+          "User-Agent": "insomnia/12.1.0",
         },
         body: postData,
       },
@@ -67,6 +69,7 @@ export default async function handler(req, res) {
     const data = await response.json();
 
     if (data.success) {
+      // Kembalikan URL Gambar QRIS ke Frontend
       return res.status(200).json({
         paymentUrl: data.data?.qr_image || data.data?.checkout_url,
         refId: refId,
@@ -75,7 +78,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: data.message });
     }
   } catch (error) {
-    console.error(error);
+    console.error("Payment Error:", error);
     return res.status(500).json({ error: error.message });
   }
 }

@@ -9,11 +9,19 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
   try {
+    // TIPS: Jika req.body kosong, Vercel terkadang butuh parsing manual
+    // tapi biasanya Vercel sudah menangani ini secara otomatis.
     const { ref_id, status } = req.body;
+
     console.log(`Callback Received: ${ref_id} | Status: ${status}`);
 
-    if (status?.toLowerCase() === "paid") {
-      // 1. Update status di tabel 'transactions'
+    // Validasi dasar agar tidak error jika body kosong
+    if (!ref_id || !status) {
+      console.log("Data callback tidak lengkap");
+      return res.status(200).send("OK"); // Tetap kirim OK agar tidak di-retry terus
+    }
+
+    if (status.toLowerCase() === "paid") {
       const { data: trxData, error: trxError } = await supabase
         .from("transactions")
         .update({ status: "paid" })
@@ -21,11 +29,12 @@ export default async function handler(req, res) {
         .select()
         .single();
 
-      if (trxError) throw trxError;
+      if (trxError) {
+        console.error("Trx Update Error:", trxError.message);
+        throw trxError;
+      }
 
-      // 2. Update status di tabel 'profiles' jika transaksi ditemukan
       if (trxData) {
-        // Logika durasi (90 hari untuk 3 bulan, sangat lama untuk lifetime)
         const daysToAdd = trxData.plan === "3_month" ? 90 : 3650;
         const expiryDate = new Date();
         expiryDate.setDate(expiryDate.getDate() + daysToAdd);
@@ -39,15 +48,20 @@ export default async function handler(req, res) {
           })
           .eq("id", trxData.user_id);
 
-        if (profileError) throw profileError;
+        if (profileError) {
+          console.error("Profile Update Error:", profileError.message);
+          throw profileError;
+        }
+
         console.log(`User ${trxData.user_id} is now Premium.`);
       }
     }
 
-    // WijayaPay butuh respon teks 'OK' untuk berhenti mengirim callback
     return res.status(200).send("OK");
   } catch (err) {
     console.error("Callback Processing Error:", err.message);
-    return res.status(500).json({ error: err.message });
+    // Kita kirim 200 agar WijayaPay menganggap request sampai,
+    // tapi kita log error-nya untuk debugging kita sendiri.
+    return res.status(200).send("Error handled");
   }
 }
