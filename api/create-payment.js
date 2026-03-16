@@ -2,30 +2,37 @@ import crypto from "crypto";
 import querystring from "querystring";
 import { createClient } from "@supabase/supabase-js";
 
-// Inisialisasi Supabase
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-);
-
 export default async function handler(req, res) {
-  // CORS Headers
+  // 1. SET HEADER CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Signature");
 
   if (req.method === "OPTIONS") return res.status(200).end();
 
+  // 2. INISIALISASI SUPABASE DI DALAM HANDLER
+  // Ini memastikan variabel environment sudah terbaca saat request diproses
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !supabaseServiceKey) {
+    return res.status(500).json({
+      error:
+        "Konfigurasi Supabase belum lengkap di Environment Variables Vercel.",
+    });
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
   try {
-    const { plan, email, userId } = req.body; // Pastikan userId dikirim dari frontend
+    const { plan, email, userId } = req.body;
     let nominal = plan === "3_month" ? 20000 : 100000;
 
     const merchantCode = process.env.WIJAYAPAY_MERCHANT_CODE;
     const apiKey = process.env.WIJAYAPAY_API_KEY;
     const refId = `INV${Date.now()}`;
 
-    // 1. Catat transaksi ke Supabase (PENTING!)
-    // Ini supaya callback nanti tahu transaksi ini punya siapa
+    // 1. Catat transaksi ke Supabase
     const { error: dbError } = await supabase.from("transactions").insert({
       user_id: userId,
       plan: plan,
@@ -34,7 +41,7 @@ export default async function handler(req, res) {
       duitku_reference: refId,
     });
 
-    if (dbError) throw new Error("Gagal mencatat transaksi ke database");
+    if (dbError) throw new Error(`Database Error: ${dbError.message}`);
 
     // 2. Hitung Signature
     const rawString = merchantCode + apiKey + refId;
