@@ -26,7 +26,7 @@ export default async function handler(req, res) {
 
   try {
     const { plan, email, userId } = req.body;
-    let nominal = plan === "3_month" ? 20000 : 100000;
+    let nominal = plan === "3_month" ? 100 : 100000;
 
     const merchantCode = process.env.WIJAYAPAY_MERCHANT_CODE;
     const apiKey = process.env.WIJAYAPAY_API_KEY;
