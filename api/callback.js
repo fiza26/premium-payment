@@ -1,27 +1,35 @@
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-);
-
 export default async function handler(req, res) {
+  // 1. Tambahkan Header CORS (Sangat disarankan)
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).end();
 
-  try {
-    // TIPS: Jika req.body kosong, Vercel terkadang butuh parsing manual
-    // tapi biasanya Vercel sudah menangani ini secara otomatis.
-    const { ref_id, status } = req.body;
+  // 2. Inisialisasi Supabase di DALAM handler agar aman dari error "required"
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+  if (!supabaseUrl || !supabaseServiceKey) {
+    console.error("Callback Error: Config Supabase tidak ditemukan");
+    return res.status(200).send("Config Error"); // Tetap 200 agar gateway tidak retry terus
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+  try {
+    const { ref_id, status } = req.body;
     console.log(`Callback Received: ${ref_id} | Status: ${status}`);
 
-    // Validasi dasar agar tidak error jika body kosong
     if (!ref_id || !status) {
-      console.log("Data callback tidak lengkap");
-      return res.status(200).send("OK"); // Tetap kirim OK agar tidak di-retry terus
+      return res.status(200).send("OK - Data Incomplete");
     }
 
     if (status.toLowerCase() === "paid") {
+      // 1. Update status transaksi
       const { data: trxData, error: trxError } = await supabase
         .from("transactions")
         .update({ status: "paid" })
@@ -29,16 +37,15 @@ export default async function handler(req, res) {
         .select()
         .single();
 
-      if (trxError) {
-        console.error("Trx Update Error:", trxError.message);
-        throw trxError;
-      }
+      if (trxError) throw trxError;
 
       if (trxData) {
+        // 2. Hitung durasi (3 bulan = 90 hari, sisanya dianggap Yearly/Lifetime)
         const daysToAdd = trxData.plan === "3_month" ? 90 : 3650;
         const expiryDate = new Date();
         expiryDate.setDate(expiryDate.getDate() + daysToAdd);
 
+        // 3. Update profile user jadi premium
         const { error: profileError } = await supabase
           .from("profiles")
           .update({
@@ -48,20 +55,14 @@ export default async function handler(req, res) {
           })
           .eq("id", trxData.user_id);
 
-        if (profileError) {
-          console.error("Profile Update Error:", profileError.message);
-          throw profileError;
-        }
-
-        console.log(`User ${trxData.user_id} is now Premium.`);
+        if (profileError) throw profileError;
+        console.log(`User ${trxData.user_id} sukses diupgrade.`);
       }
     }
 
     return res.status(200).send("OK");
   } catch (err) {
     console.error("Callback Processing Error:", err.message);
-    // Kita kirim 200 agar WijayaPay menganggap request sampai,
-    // tapi kita log error-nya untuk debugging kita sendiri.
-    return res.status(200).send("Error handled");
+    return res.status(200).send("Internal Error Handled");
   }
 }
