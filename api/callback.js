@@ -1,16 +1,14 @@
 import { createClient } from "@supabase/supabase-js";
 
 export default async function handler(req, res) {
-  // Hanya izinkan metode POST
   if (req.method !== "POST") return res.status(405).end();
 
   try {
     const body = req.body;
     console.log("Payload Masuk:", JSON.stringify(body));
 
-    // 1. Ambil ref_id dari dalam objek 'data' sesuai spek mereka
     const ref_id = body.data?.ref_id;
-    const status = body.status; // "paid" ada di luar objek data
+    const status = body.status;
 
     console.log(`Memproses Callback -> RefID: ${ref_id} | Status: ${status}`);
 
@@ -25,7 +23,7 @@ export default async function handler(req, res) {
         process.env.SUPABASE_SERVICE_ROLE_KEY,
       );
 
-      // 2. Update status transaksi di database
+      // 1. Update status transaksi
       const { data: trx, error: trxErr } = await supabase
         .from("transactions")
         .update({ status: "paid" })
@@ -36,26 +34,35 @@ export default async function handler(req, res) {
       if (trxErr) throw new Error("Database Update Error: " + trxErr.message);
 
       if (trx) {
-        // 3. Upgrade user ke premium
+        // --- LOGIKA BARU DI SINI ---
+        // Hitung durasi berdasarkan plan (3_month = 90 hari, sisanya dianggap 10 tahun/lifetime)
+        const daysToAdd = trx.plan === "3_month" ? 90 : 3650;
+        const expiryDate = new Date();
+        expiryDate.setDate(expiryDate.getDate() + daysToAdd);
+        // ---------------------------
+
+        // 2. Upgrade user ke premium + isi expiry date
         const { error: profileErr } = await supabase
           .from("profiles")
           .update({
             ispremium: true,
             plan: trx.plan,
+            premiumexpiry: expiryDate.toISOString(), // Masukkan ke kolom ini
           })
           .eq("id", trx.user_id);
 
         if (profileErr)
           throw new Error("Profile Update Error: " + profileErr.message);
-        console.log(`User ${trx.user_id} sukses menjadi Premium.`);
+
+        console.log(
+          `User ${trx.user_id} sukses menjadi Premium hingga ${expiryDate.toDateString()}.`,
+        );
       }
     }
 
-    // 4. WAJIB mengembalikan JSON ini sesuai dokumentasi mereka
     return res.status(200).json({ status: true });
   } catch (err) {
     console.error("Callback Processing Error:", err.message);
-    // Tetap kirim JSON agar tidak dianggap error oleh sistem mereka
     return res.status(200).json({ status: false });
   }
 }
