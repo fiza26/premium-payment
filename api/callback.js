@@ -1,68 +1,61 @@
 import { createClient } from "@supabase/supabase-js";
 
 export default async function handler(req, res) {
-  // 1. Tambahkan Header CORS (Sangat disarankan)
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-  if (req.method === "OPTIONS") return res.status(200).end();
+  // Hanya izinkan metode POST
   if (req.method !== "POST") return res.status(405).end();
 
-  // 2. Inisialisasi Supabase di DALAM handler agar aman dari error "required"
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl || !supabaseServiceKey) {
-    console.error("Callback Error: Config Supabase tidak ditemukan");
-    return res.status(200).send("Config Error"); // Tetap 200 agar gateway tidak retry terus
-  }
-
-  const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
   try {
-    const { ref_id, status } = req.body;
-    console.log(`Callback Received: ${ref_id} | Status: ${status}`);
+    const body = req.body;
+    console.log("Payload Masuk:", JSON.stringify(body));
+
+    // 1. Ambil ref_id dari dalam objek 'data' sesuai spek mereka
+    const ref_id = body.data?.ref_id;
+    const status = body.status; // "paid" ada di luar objek data
+
+    console.log(`Memproses Callback -> RefID: ${ref_id} | Status: ${status}`);
 
     if (!ref_id || !status) {
-      return res.status(200).send("OK - Data Incomplete");
+      console.error("Payload tidak sesuai struktur dokumentasi");
+      return res.status(200).json({ status: false });
     }
 
-    if (status.toLowerCase() === "paid") {
-      // 1. Update status transaksi
-      const { data: trxData, error: trxError } = await supabase
+    if (status === "paid") {
+      const supabase = createClient(
+        process.env.SUPABASE_URL,
+        process.env.SUPABASE_SERVICE_ROLE_KEY,
+      );
+
+      // 2. Update status transaksi di database
+      const { data: trx, error: trxErr } = await supabase
         .from("transactions")
         .update({ status: "paid" })
         .eq("duitku_reference", ref_id)
         .select()
         .single();
 
-      if (trxError) throw trxError;
+      if (trxErr) throw new Error("Database Update Error: " + trxErr.message);
 
-      if (trxData) {
-        // 2. Hitung durasi (3 bulan = 90 hari, sisanya dianggap Yearly/Lifetime)
-        const daysToAdd = trxData.plan === "3_month" ? 90 : 3650;
-        const expiryDate = new Date();
-        expiryDate.setDate(expiryDate.getDate() + daysToAdd);
-
-        // 3. Update profile user jadi premium
-        const { error: profileError } = await supabase
+      if (trx) {
+        // 3. Upgrade user ke premium
+        const { error: profileErr } = await supabase
           .from("profiles")
           .update({
             ispremium: true,
-            plan: trxData.plan,
-            premiumexpiry: expiryDate.toISOString(),
+            plan: trx.plan,
           })
-          .eq("id", trxData.user_id);
+          .eq("id", trx.user_id);
 
-        if (profileError) throw profileError;
-        console.log(`User ${trxData.user_id} sukses diupgrade.`);
+        if (profileErr)
+          throw new Error("Profile Update Error: " + profileErr.message);
+        console.log(`User ${trx.user_id} sukses menjadi Premium.`);
       }
     }
 
-    return res.status(200).send("OK");
+    // 4. WAJIB mengembalikan JSON ini sesuai dokumentasi mereka
+    return res.status(200).json({ status: true });
   } catch (err) {
     console.error("Callback Processing Error:", err.message);
-    return res.status(200).send("Internal Error Handled");
+    // Tetap kirim JSON agar tidak dianggap error oleh sistem mereka
+    return res.status(200).json({ status: false });
   }
 }
