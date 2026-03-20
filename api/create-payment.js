@@ -73,7 +73,6 @@ export default async function handler(req, res) {
     const { error: dbError } = await supabase.from("transactions").insert([
       {
         user_id: userId,
-        email: email,
         amount: amount,
         status: "pending",
         duitku_reference: orderId, // Digunakan untuk polling di frontend
