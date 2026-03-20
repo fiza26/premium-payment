@@ -76,7 +76,7 @@ export default async function handler(req, res) {
         amount: amount,
         status: "pending",
         duitku_reference: orderId, // Digunakan untuk polling di frontend
-        plan_type: plan,
+        plan: plan,
         created_at: new Date(),
       },
     ]);
