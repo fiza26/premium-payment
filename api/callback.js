@@ -34,7 +34,7 @@ export default async function handler(req, res) {
 
     if (trx) {
       // 2. Hitung durasi
-      const daysToAdd = trx.plan_type === "3_month" ? 90 : 3650;
+      const daysToAdd = trx.plan_type === "1_month" ? 30 : 3650;
       const expiryDate = new Date();
       expiryDate.setDate(expiryDate.getDate() + daysToAdd);
 

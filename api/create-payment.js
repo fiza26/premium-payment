@@ -33,7 +33,7 @@ export default async function handler(req, res) {
 
   // Tentukan Harga
   let amount = 0;
-  if (plan === "3_month") amount = 20000;
+  if (plan === "1_month") amount = 20000;
   if (plan === "lifetime") amount = 100000;
 
   // Validasi input minimal
